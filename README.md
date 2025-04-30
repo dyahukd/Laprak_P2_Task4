@@ -804,8 +804,18 @@ return 0;
 3. Program `worker.c` menerima pesan dari antrean masing-masing secara terus-menerus. Setiap kali pesan diterima, worker mencatat aktivitasnya di `sistem.log`. Jika menerima pesan "TERMINATE", worker menghentikan proses dan mencatat jumlah pesan yang telah diproses sebelum keluar.
 
 ## **Bukti Hasil Program**
+#### **Hasil `client.c`**
+![Image](https://github.com/user-attachments/assets/cefd2e27-312e-4cc1-b1cb-eba964517d7e)
+![Image](https://github.com/user-attachments/assets/dd64a9b3-0306-4ff0-9a61-f4e0ec87880f)
+![Image](https://github.com/user-attachments/assets/1253feda-08f0-4efb-8055-d0a5e3b0a0c1)
 
+#### **Hasil `loadbalancer.c`**
+![Image](https://github.com/user-attachments/assets/ded5fe47-e589-4926-9708-d77ecf9062e8)
+![Image](https://github.com/user-attachments/assets/2a434096-37e1-435f-8e9d-7aa0493df457)
 
+#### **Hasil `worker.c`**
+![Image](https://github.com/user-attachments/assets/14b1beae-b0d5-4045-a6ed-855b5f51e2d1)
+![Image](https://github.com/user-attachments/assets/f31ff51e-ad42-4438-91ff-711d1af5f329)
 
 
 
