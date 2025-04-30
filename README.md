@@ -806,6 +806,7 @@ return 0;
 ## **Bukti Hasil Program**
 #### **Hasil `client.c`**
 ![Image](https://github.com/user-attachments/assets/cefd2e27-312e-4cc1-b1cb-eba964517d7e)
+#### **`sistem.log`**
 ![Image](https://github.com/user-attachments/assets/dd64a9b3-0306-4ff0-9a61-f4e0ec87880f)
 ![Image](https://github.com/user-attachments/assets/1253feda-08f0-4efb-8055-d0a5e3b0a0c1)
 
