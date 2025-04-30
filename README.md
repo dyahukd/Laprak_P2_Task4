@@ -498,8 +498,305 @@ int main() {
 ```
 - Program selesai dan mengembalikan nilai `0` (berarti sukses).
 
+### **loadbalancer.c**
+#### **Import Library**
+```
+#include <stdio.h>      // Untuk fungsi input/output seperti printf, fopen, fprintf
+#include <stdlib.h>     // Untuk fungsi utility seperti atoi, malloc, exit
+#include <string.h>     // Untuk manipulasi string seperti strcpy, strtok
+#include <sys/ipc.h>    // Untuk fungsi key_t, ftok (membuat key IPC)
+#include <sys/shm.h>    // Untuk fungsi shared memory: shmget, shmat, shmctl
+#include <sys/msg.h>    // Untuk fungsi message queue: msgget, msgsnd, msgrcv
+#include <unistd.h>     // Untuk fungsi POSIX seperti fork, sleep, close
+#include <fcntl.h>      // Untuk manipulasi file descriptor (opsional disini)
+#include <time.h>       // Untuk mencatat waktu log dengan fungsi time dan ctime
+```
 
+#### **Struktur Data**
+```
+typedef struct {
+    char message[100];
+    int index;
+} WorkerMessage;
+```
+- Struktur `WorkerMessage` berisi pesan dan indeks urutan.
 
+```
+typedef struct {
+    long mtype;
+    WorkerMessage wmsg;
+} msgbuf;
+```
+- Struktur `msgbuf` adalah format pesan untuk message queue.
+
+```
+typedef struct {
+    char message[100];
+    int count;
+} MessageData;
+```
+- Struktur `MessageData` digunakan dalam shared memory. Menyimpan pesan dari client dan jumlah pesan yang akan dikirim.
+
+#### **Fungsi Logging**
+```
+void log_received(const char* message, int index) {
+    FILE* log_file = fopen("sistem.log", "a");
+```
+- Membuka file log untuk ditambahkan (`a` = append).
+
+```
+    if (log_file == NULL) {
+        perror("Failed to open log file");
+        return;
+    }
+```
+- Jika gagal membuka file, cetak error dan keluar dari fungsi.
+
+```
+    time_t now;
+    time(&now);
+```
+- Mendapatkan waktu saat ini untuk dicatat dalam log.
+
+```
+    fprintf(log_file, "[%.19s] Received at lb: %s (#message %d)\n", ctime(&now), message, index);
+```
+- Menuliskan log pesan dan urutannya.
+
+```
+    fclose(log_file);
+```
+- Menutup file log.
+
+#### **Fungsi `main`**
+```
+int main(int argc, char* argv[]) {
+```
+- Fungsi utama program. `argc` = jumlah argumen, `argv[]` = array argumen.
+
+```
+    if (argc != 2) {
+        printf("Usage: %s <number_of_workers>\n", argv[0]);
+        return 1;
+    }
+```
+- Memastikan argumen input benar (jumlah worker). Jika tidak, tampilkan petunjuk.
+
+```
+    int n_workers = atoi(argv[1]);
+```
+- Mengubah argumen string ke integer.
+
+```
+    if (n_workers <= 0) {
+        printf("Number of workers must be positive\n");
+        return 1;
+    }
+```
+- Jika `n_workers` kurang dari sama dengan 0, maka akan mencetak pesan error.
+
+#### **Setup Message Queue**
+```
+    int worker_queues[n_workers];
+    for (int i = 0; i < n_workers; i++) {
+        key_t key = ftok("worker", i+1);
+        worker_queues[i] = msgget(key, 0666 | IPC_CREAT);
+    }
+```
+- Membuat message queue untuk setiap worker menggunakan `msgget` dan key unik dari `ftok`.
+
+#### **Ambil Shared Memory**
+```
+    key_t shm_key = ftok("shmfile", 65);
+    int shmid = shmget(shm_key, sizeof(MessageData), 0666|IPC_CREAT);
+    MessageData *data = (MessageData*) shmat(shmid, (void*)0, 0);
+```
+- Mengakses shared memory yang dibuat client. Pointer `data` menunjuk ke data yang diterima.
+
+#### **Kirim Pesan ke Worker**
+```
+    for (int i = 0; i < data->count; i++) {
+        log_received(data->message, i+1);
+        
+        msgbuf msg;
+        msg.mtype = 1;
+        strcpy(msg.wmsg.message, data->message);
+        msg.wmsg.index = i+1;
+        
+        int target_worker = i % n_workers;
+        msgsnd(worker_queues[target_worker], &msg, sizeof(msg.wmsg), 0);
+    }
+```
+- Melakukan iterasi sesuai jumlah `data->count`
+- Setiap pesan dikirim ke worker secara bergiliran menggunakan modulo (`i % n_workers`)
+
+#### **Kirim Sinyal Terminasi ke Semua Worker**
+```
+    for (int i = 0; i < n_workers; i++) {
+        msgbuf term_msg;
+        term_msg.mtype = 1;
+        strcpy(term_msg.wmsg.message, "TERMINATE");
+        term_msg.wmsg.index = -1;
+```
+- Membuat pesan terminasi bertipe `"TERMINATE"` dan indeks `-1` sebagai flag terminasi.
+
+```
+        if (msgsnd(worker_queues[i], &term_msg, sizeof(term_msg.wmsg), 0) == -1) {
+            perror("Failed to send termination signal");
+        } else {
+            printf("Sent termination to worker %d\n", i+1);
+        }
+    }
+```
+- Mengirim pesan terminasi "TERMINATE" ke tiap antrean worker menggunakan `msgsnd()`. Jika pengiriman gagal, akan dicetak pesan error; jika berhasil, akan ditampilkan notifikasi bahwa terminasi berhasil dikirim ke worker yang bersangkutan.
+
+#### **Tutup Shared Memory**
+```
+    shmdt(data);
+    shmctl(shmid, IPC_RMID, NULL);
+```
+- `shmdt` = detach memory
+- `shmctl(..., IPC_RMID, ...)` = hapus shared memory
+
+```
+    return 0;
+}
+```
+- Program selesai.
+
+### **worker.c**
+#### **Import Library**
+```
+#include <stdio.h>       // Untuk fungsi input/output standar seperti printf(), fopen(), dll
+#include <stdlib.h>      // Untuk fungsi umum seperti atoi(), exit(), dll
+#include <string.h>      // Untuk fungsi manipulasi string seperti strcmp(), strcpy()
+#include <sys/ipc.h>     // Untuk membuat key IPC (Inter Process Communication)
+#include <sys/msg.h>     // Untuk fungsi message queue seperti msgget(), msgrcv(), msgsnd()
+#include <unistd.h>      // Untuk fungsi POSIX seperti sleep(), fork() (meskipun tidak digunakan di sini)
+#include <errno.h>       // Untuk menangani dan mencetak kesalahan sistem
+#include <fcntl.h>       // Untuk manipulasi file descriptor (tidak digunakan eksplisit di kode ini)
+#include <time.h>        // Untuk mencatat waktu ke dalam log
+```
+
+#### **Struktur Data**
+```
+typedef struct {
+    char message[100];
+    int index;
+} WorkerMessage;
+```
+- Struktur data `WorkerMessage` ini digunakan untuk menyimpan isi pesan yang dikirim oleh load balancer.
+- `message`: Isi pesan (misal: pesan teks).
+- `index`: Nomor urut pesan.
+
+```
+typedef struct {
+    long mtype;
+    WorkerMessage wmsg;
+} msgbuf;
+```
+- Struktur Data `msgbuf` ini digunakan sebagai format untuk antrean pesan.
+- `mtype`: Tipe pesan, harus bertipe `long`.
+- `wmsg`: Isi pesan dari tipe `WorkerMessage`.
+
+#### **Fungsi `log_activity`**
+```
+void log_activity(const char *activity) {
+    FILE* log_file = fopen("sistem.log", "a"); // Membuka file log dengan mode append ("a")
+    if (log_file == NULL) {
+        perror("Failed to open log file");     // Jika gagal membuka file, tampilkan error
+        return;
+    }
+
+    time_t now;
+    time(&now);                                // Mendapatkan waktu saat ini
+    fprintf(log_file, "[%.19s] %s\n", ctime(&now), activity); // Menulis waktu dan aktivitas ke file log
+    fclose(log_file);                          // Menutup file log setelah selesai
+```
+- Fungsi ini mencatat semua aktivitas penting (misalnya menerima pesan atau selesai bekerja) ke dalam file log bernama `sistem.log`.
+
+#### **Main Program**
+```
+int main(int argc, char* argv[]) {
+```
+- Fungsi utama program.
+- `argc`: Jumlah argumen.
+- `argv`: Array dari argumen.
+
+1. Validasi Argumen
+```
+if (argc != 2) {
+    printf("Usage: %s <worker_id>\n", argv[0]);
+    return 1;
+}
+```
+- Mengecek apakah jumlah argumen sesuai. Jika tidak, tampilkan cara pakai program dan keluar.
+
+2. Inisialisasi Variabel
+```
+int worker_id = atoi(argv[1]);        // Mengubah argumen worker_id dari string ke integer
+int message_count = 0;                // Menghitung jumlah pesan yang diproses oleh worker ini
+char log_buffer[100];                 // Buffer untuk menyimpan pesan log sementara
+```
+
+3. Setup Message Queue
+```
+key_t key = ftok("worker", worker_id); // Membuat key unik berdasarkan nama file dan ID worker
+if (key == -1) {
+    perror("ftok failed");             // Gagal membuat key
+    exit(1);
+}
+```
+- Jika gagal membuat key, maka akan mencetak pesan error.
+
+```
+int msgid = msgget(key, 0666 | IPC_CREAT); // IPC_CREAT : Membuat atau mendapatkan antrean pesan
+if (msgid == -1) {
+    perror("msgget failed");               // Gagal membuat/get queue
+    exit(1);
+}
+```
+- Jika tidak ada `msgid`, maka akan mencetak pesan error.
+
+4. Loop Utama Worker
+```
+while (1) {
+    msgbuf msg;
+```
+- Worker akan terus menerima pesan hingga menerima sinyal `"TERMINATE"`.
+
+```
+    if (msgrcv(msgid, &msg, sizeof(msg.wmsg), 1, 0) == -1) {
+        perror("msgrcv failed");        // Gagal menerima pesan
+        break;
+    }
+```
+- Jika tidak ada pesan yang diterima, akan mencetak pesan error.
+c
+Copy
+Edit
+    if (strcmp(msg.wmsg.message, "TERMINATE") == 0 && msg.wmsg.index == -1) {
+        break;                          // Jika pesan TERMINATE diterima, keluar dari loop
+    }
+c
+Copy
+Edit
+    sprintf(log_buffer, "Worker%d: message received", worker_id); // Buat pesan log
+    log_activity(log_buffer);                                     // Simpan ke file log
+    message_count++;                                              // Tambah jumlah pesan
+}
+5. Setelah Keluar dari Loop (Worker Selesai)
+```
+sprintf(log_buffer, "Worker x%d: %d messages", worker_id, message_count);
+log_activity(log_buffer);
+```
+- Mencatat jumlah total pesan yang diterima worker ini
+
+```
+printf("Worker %d processed %d messages\n", worker_id, message_count);
+return 0;
+```
+- Menampilkan info total pesan yang diproses worker ini ke terminal.
 
 
 
@@ -525,11 +822,9 @@ int main() {
 
 
 ## **Hasil Program**
-1. Menampilkan pilihan menu pada terminal.
-2. Untuk pilihan 1, mendownload file zip, kemudian diekstrak, lalu file zip sebelumnya dihapus, tersisa netflixData.csv.
-3. Untuk pilihan 2, mensortir film berdasarkan judul dan tahun, tercipta dua buah folder yakni `judul` dan `tahun`, juga `log.txt`.
-4. Untuk pilihan 3, tercipta file laporan bernama `report_30042025.txt` sesuai hari dimana file dijalankan.
-5. Untuk pilihan 0, keluar dari program.
+1. Program `client.c` meminta input berupa pesan dan jumlah pengiriman (format: `<pesan>;<jumlah>`), lalu menyimpan data tersebut ke memori bersama (`shared memory`) serta mencatat log-nya ke `sistem.log`.
+2. Program `loadbalancer.c` membaca data dari memori bersama, lalu mengirimkan pesan tersebut secara bergilir ke antrean pesan tiap worker, dan mencatat setiap pengiriman ke `sistem.log`. Setelah semua pesan dikirim, program juga mengirimkan sinyal terminasi ke semua worker.
+3. Program `worker.c` menerima pesan dari antrean masing-masing secara terus-menerus. Setiap kali pesan diterima, worker mencatat aktivitasnya di `sistem.log`. Jika menerima pesan "TERMINATE", worker menghentikan proses dan mencatat jumlah pesan yang telah diproses sebelum keluar.
 
 ## **Bukti Hasil Program**
 #### **Tampilan Menu**
