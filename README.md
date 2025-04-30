@@ -803,7 +803,7 @@ return 0;
 2. Program `loadbalancer.c` membaca data dari memori bersama, lalu mengirimkan pesan tersebut secara bergilir ke antrean pesan tiap worker, dan mencatat setiap pengiriman ke `sistem.log`. Setelah semua pesan dikirim, program juga mengirimkan sinyal terminasi ke semua worker.
 3. Program `worker.c` menerima pesan dari antrean masing-masing secara terus-menerus. Setiap kali pesan diterima, worker mencatat aktivitasnya di `sistem.log`. Jika menerima pesan "TERMINATE", worker menghentikan proses dan mencatat jumlah pesan yang telah diproses sebelum keluar.
 
-## **Bukti Hasil Program
+## **Bukti Hasil Program**
 
 
 
